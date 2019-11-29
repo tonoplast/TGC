@@ -8,33 +8,40 @@ filterfolder ='E:\MATLAB\R2018b\toolbox\signal\signal\'; %% To use Matlab filter
 inPath = 'D:\3_Frequency\thetagamma\H301\'; %% Directory of your cleaned file
 outPath = 'D:\3_Frequency\thetagamma\H301\'; %% Saving path
 
-
    for h=1:5 %To run Theta-gamma coupling 5 times --> Depending on your need
        
     %% load files (cleaned data) here %%
-    EEG = pop_loadset('filename','Clean_file.set','filepath',inPath);
-    EEG = pop_resample( EEG, 250); %% down-sampling should reduce time it takes.
+    EEG = pop_loadset('filename','004_postmarainter_epochcorrect.set','filepath',inPath);
+    
+    % setting SAMPLING RATE here %
+    set_srate = 250;
+    label_multiplier = 1000 / set_srate; % to be used later for edge effect %
+    
+    EEG = pop_resample( EEG, set_srate); %% down-sampling should reduce time it takes.
     [ALLEEG EEG CURRENTSET] = eeg_store(ALLEEG, EEG,  1);
 
 
     %%
     
-    frontchan = 'FZ'; %% channel of interest 1
-    backchan = 'PZ'; %% channel of interest 2
+    frontchan = {'F3','Fz','F4'}; %% channel of interest 1
+    backchan = {'P1','Pz','P3'}; %% channel of interest 2
+    
+%     frontchan = {'Fz'}; %% channel of interest 1
+%     backchan = {'Pz'}; %% channel of interest 2
     
     %%
     %%%
     [ALLEEG, EEG] = eeg_store(ALLEEG, EEG, CURRENTSET);
-    THISCHAN=find(strcmp({EEG.chanlocs.labels},backchan)); %% gamma
-    THATCHAN=find(strcmp({EEG.chanlocs.labels},frontchan)); %% theta
+    THISCHAN=find(ismember({EEG.chanlocs.labels},backchan)); %% gamma
+    THATCHAN=find(ismember({EEG.chanlocs.labels},frontchan)); %% theta
     [ch,pnts,eps]=size(EEG.data);
     
 
     %% selecting epochs and shuffling %%%
     I=1:eps;
     I= shuffle(I);
-    keep=[I(1:10)]; %%% keeping 10 epochs (consider changing as needed - better to have longer data)
-    
+    keep=[I(1:round(eps*0.5))]; %%% keeping 10 epochs (consider changing as needed - better to have longer data)
+%      keep=[I(1:30)]; 
     
     %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
     %%%%%%%%%%%%%%%%%%%%%%%% PAC %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -54,11 +61,9 @@ outPath = 'D:\3_Frequency\thetagamma\H301\'; %% Saving path
     %%% all trials or use above
     % EEG=ALLTRIALS;
     EEG = eeg_checkset( EEG );
-    THISCHAN=find(strcmp({EEG.chanlocs.labels},backchan));
-    THATCHAN=find(strcmp({EEG.chanlocs.labels},frontchan));
     
     clear glmf mi plv vtk
-    [c,m,n]= size([EEG.data(THISCHAN,:,:)]);
+%     [c,m,n]= size([EEG.data(THISCHAN,:,:)]);
     [ch,pnts,eps]=size(EEG.data([THISCHAN],:,:));
     
     %% DATA zero padding and reshaping
@@ -71,10 +76,10 @@ outPath = 'D:\3_Frequency\thetagamma\H301\'; %% Saving path
     %%% meaning the data if more than 1 chan
     data1 = mean(data1,1);
     data2 = mean(data2,1);
+    
     label = zeros(1,pnts,eps); %% zero padding labelling for edge effect problem
+    label(:,[1:(500/label_multiplier),end-(500/label_multiplier):end],:)=1; %% edge effect removal step (taking sampling rate into account)
     
-    
-    label(:,[1:500,end-500:end],:)=1; %% edge effect removal step
     dat1 = squeeze(data1)';
     dat2 = squeeze(data2)';
     label=squeeze(label)';
@@ -83,18 +88,22 @@ outPath = 'D:\3_Frequency\thetagamma\H301\'; %% Saving path
     [m,n]=size(dat1);
     data1 =reshape([dat1'],[1,m*n]);
     data2= reshape([dat2'],[1,m*n]);
-    
     label= logical(reshape([label'],[1,m*n]));
+    label_ori = label;
     
+    % alternative label %
+    label_alt = zeros(1,length(data1));
+    label_alt(:,[1:(2000/label_multiplier),end-(2000/label_multiplier):end])=1;
+    label = logical(label_alt);
+
     select=[];
     srate=EEG.srate;
     
-    
-    %% Filtering (adaptive - script attached)
+        %% Filtering (adaptive - script attached)
     %srate=1000
     cfg =[];
-    cfg.sr= EEG.srate;
-    cfg.lo_bounds= [2 9];
+    cfg.sr= srate;
+    cfg.lo_bounds= [3 9];
     cfg.lo_step=0.1;
     cfg.lo_bandwidth=2;
     
@@ -103,7 +112,7 @@ outPath = 'D:\3_Frequency\thetagamma\H301\'; %% Saving path
     cfg. hi_bandwidth='adaptive';
     [gamma,theta]=setup_adaptivefilterbands(cfg);
     
-    cd(filterfolder);
+    %cd(filterfolder);
     %% PAC estimation --> calculates four different methods
     
     bb=size(gamma,2);
@@ -115,19 +124,19 @@ outPath = 'D:\3_Frequency\thetagamma\H301\'; %% Saving path
     clear glmf mi plv vtk
     [glmf,plv,vtk,mi] = deal(zeros(bb,cc,aa)); % -- initialize output matrices
     
-    for a = 1:aa;
+    for a = 1:aa
         raw_signal = data1(1,:,a);
         raw_signal2=data2(1,:,a);
         label=logical(label);
         
         ntimepoints = [length(raw_signal)]- [sum(label)];
-        for b = 1:bb;
-            [x_gamma,y_gamma]=butter(2,[gamma(1,b,c) gamma(2,b,c)]/(srate/2),'bandpass');
+        for b = 1:bb
+            [x_gamma,y_gamma]=butter(2,[gamma(1,b) gamma(2,b)]/(srate/2),'bandpass');
             gamma_wave= filtfilt(x_gamma,y_gamma, double(raw_signal));
             gamma_z = hilbert(gamma_wave);
             gamma_amp= abs(gamma_z);
             
-            for c = 1:cc;
+            for c = 1:cc
                 [x_theta,y_theta]=butter(2,[theta(1,c) theta(2,c)]/(srate/2),'bandpass');
                 theta_wave= filtfilt(x_theta,y_theta, double(raw_signal2));
                 theta_z=hilbert(theta_wave);
@@ -147,23 +156,23 @@ outPath = 'D:\3_Frequency\thetagamma\H301\'; %% Saving path
                 nbins = 18;
                 
                 %%%% Tort's Modulation Index (Tort et al., 2010)
-                thetaphase_bin = ceil( tiedrank( thetaphase ) / (ntimepoints / nbins) ); % -- bin the theta phase angles into nbins -- NOTE: tiedrank also exists in eeglab toolbox; when added to path, may cause conflict
-                gammapow_bin = zeros(1,nbins);
-                for k=1:nbins
-                    gammapow_bin(k) = squeeze(mean(gammapow(thetaphase_bin==k))); % -- compute mean gamma power in each bin
-                end
-                gammapow_bin = gammapow_bin ./ sum(gammapow_bin); % -- normalize
-                
-                mi(b,c,a) = (log(nbins) + sum(gammapow_bin.*log(gammapow_bin)) ) ./ log(nbins); % -- compute MI
-                
-                %%%%  -- Phase Locking Value (Cohen, 2008; Colgin et al 2009)
-                plv(b,c,a) = abs(mean(exp(1i*( thetaphase - angle(hilbert(detrend(gammapow))) ))));
-                
-                %%%%     Voytek method
-                vtk(b,c,a) = cfc_est_voytek( thetaphase', gammapowfilt');
-                
-                %% glm method with theta filtered (Used this method)
-                %             glmf(b,c,a) = cfc_est_glm(thetaphase,gammapowfilt); %% using this at the end
+%                 thetaphase_bin = ceil( tiedrank( thetaphase ) / (ntimepoints / nbins) ); % -- bin the theta phase angles into nbins -- NOTE: tiedrank also exists in eeglab toolbox; when added to path, may cause conflict
+%                 gammapow_bin = zeros(1,nbins);
+%                 for k=1:nbins
+%                     gammapow_bin(k) = squeeze(mean(gammapow(thetaphase_bin==k))); % -- compute mean gamma power in each bin
+%                 end
+%                 gammapow_bin = gammapow_bin ./ sum(gammapow_bin); % -- normalize
+%                 
+%                mi(b,c,a) = (log(nbins) + sum(gammapow_bin.*log(gammapow_bin)) ) ./ log(nbins); % -- compute MI
+%                 
+%                 %%%  -- Phase Locking Value (Cohen, 2008; Colgin et al 2009)
+%                 plv(b,c,a) = abs(mean(exp(1i*( thetaphase - angle(hilbert(detrend(gammapow))) ))));
+%                 
+%                 %%%     Voytek method
+%                 vtk(b,c,a) = cfc_est_voytek( thetaphase', gammapowfilt');
+%                 
+                % glm method with theta filtered (Used this method)
+%                  glmf(b,c,a) = cfc_est_glm(thetaphase,gammapowfilt); %% using this at the end
                 
                 % For masking (GLM)
                 [out,stat] = cfc_est_glmstats(thetaphase,gammapowfilt);
@@ -194,13 +203,14 @@ outPath = 'D:\3_Frequency\thetagamma\H301\'; %% Saving path
     
     
     %% Makes masking and saves
+   
     figure;
     in=glmfP1;
     moo=in;
-    pthresh= 0.05/(51*61);%(31*41); % Set your threshold here.
+    pthresh= 0.05/(size(glmfP1,1)*size(glmfP1,2));%(31*41); % Set your threshold here.
     moo((in<pthresh))=0;
     moo((in>pthresh))=1;
-    imshow(moo)
+%     imshow(moo)
     
     moo2(:,:,1)=[glmf];
     moo2(:,:,2)=[glmfP1];
@@ -208,10 +218,10 @@ outPath = 'D:\3_Frequency\thetagamma\H301\'; %% Saving path
     moo2(:,:,4)=[glmfP3];
     pval=logical(in>pthresh);
     for i =1:4
-        mi =   moo2(:,:,i);
+        mi =   moo2(:,:,i);     
         mi(pval)=NaN;
         moo3(:,:,i)=mi;
-    end
+     end
 
     mkdir([outPath]);
     
@@ -220,9 +230,12 @@ outPath = 'D:\3_Frequency\thetagamma\H301\'; %% Saving path
     save(fn,'moo3');
     save('freqs','theta','gamma');
     
-    
-end
+    fn2=['GLMf_stat_repeat_no_mask' num2str(h)];
+    save(fn2,'glmf');
+        
+   end
 
+   close all;
 %% Loading saved TGCs
 
 cd([outPath])
@@ -233,14 +246,18 @@ for i = 1:hh
     load('freqs.mat')    
     moo4(:,:,:,i)=moo3;
     clear moo3
+    
+    load(['GLMf_stat_repeat_no_mask' num2str(i) '.mat'])
+    mooX(:,:,:,i) = glmf;
 end
 
 hh=[];hh=h;
 m=[]; s=1;
 for i=1:hh
-    m(:,:,s) = moo4(:,:,1,i);
+        m(:,:,s) = moo4(:,:,1,i);
     s=s+1;
 end
+
 %%
 % Plotting each TGC with masking
 TGC_plotter(m,theta,gamma,[4,8],[30,60],1,'GLMf')
@@ -249,4 +266,6 @@ TGC_plotter(m,theta,gamma,[4,8],[30,60],1,'GLMf')
 % frequency
 TGC_plotter(mean(m,3),theta,gamma,[4,8],[30,60],1,'GLMf')
 % TGC_plotter(median(m,3),theta,gamma,[4,8],[30,60],1,'GLMf')
+% TGC_plotter(mean(mooX,3),theta,gamma,[4,8],[30,60],1,'GLMf')
+
 
